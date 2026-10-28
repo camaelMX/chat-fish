@@ -168,22 +168,43 @@ export class VoiceService {
    * 合成一句话到 wav 文件（带缓存），返回文件绝对路径。
    * 抛错时消息已可直接给人看。
    */
-  static async synthToFile(text: string, voice: string): Promise<string> {
+  /**
+   * 同一句话正在合成时，别发第二次请求。
+   * 后台预热和用户点播放可能同时要同一句，并发写同一个文件会写坏。
+   */
+  private static inflight: Map<string, Promise<string>> = new Map<string, Promise<string>>();
+
+  static synthToFile(text: string, voice: string): Promise<string> {
     const clean: string = VoiceService.stripForTts(text);
     if (clean.length === 0) {
-      throw new Error('没有要念的内容');
+      return Promise.reject(new Error('没有要念的内容'));
     }
     if (VoiceService.cacheDir.length === 0) {
-      throw new Error('语音服务还没初始化');
+      return Promise.reject(new Error('语音服务还没初始化'));
     }
     if (VoiceService.hostValue.length === 0) {
-      throw new Error('还没填电脑地址，去设置里填一下');
+      return Promise.reject(new Error('还没填电脑地址，去设置里填一下'));
     }
     const path: string = VoiceService.cacheDir + '/t_' +
       VoiceService.hash(clean + '|' + voice).toString(36) + '.wav';
     if (fileIo.accessSync(path)) {
-      return path;
+      return Promise.resolve(path);
     }
+    const running: Promise<string> | undefined = VoiceService.inflight.get(path);
+    if (running !== undefined) {
+      return running;
+    }
+    const task: Promise<string> = VoiceService.synthInner(path, clean, voice);
+    VoiceService.inflight.set(path, task);
+    const clear = (): void => {
+      VoiceService.inflight.delete(path);
+    };
+    task.then(clear, clear);
+    return task;
+  }
+
+  /** 真正去电脑要音频，写进 path */
+  private static async synthInner(path: string, clean: string, voice: string): Promise<string> {
     const req = http.createHttp();
     try {
       const body: Record<string, string> = {

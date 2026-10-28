@@ -267,6 +267,18 @@ struct Index {
   private loadData(): void {
     const data: StoreData = CompanionStore.load(this.ctx());
     this.messages = CompanionStore.toMessages(this.ctx(), data);
+    // 上次转写没回来就退出的话，会留下一条空文字的语音条，直接丢掉
+    const kept: Message[] = [];
+    for (let i: number = 0; i < this.messages.length; i++) {
+      const m: Message = this.messages[i];
+      if (m.role === 'user' && m.audioPath.length > 0 && m.content.length === 0) {
+        continue;
+      }
+      kept.push(m);
+    }
+    if (kept.length !== this.messages.length) {
+      this.messages = kept;
+    }
     // 表情包文件从 s001.gif 改名成「开心.gif」这种，历史消息里的旧名字要跟着搬
     let migrated: boolean = false;
     for (let i: number = 0; i < this.messages.length; i++) {
@@ -279,7 +291,7 @@ struct Index {
         }
       }
     }
-    if (migrated) {
+    if (migrated || kept.length !== data.messages.length) {
       this.persistNow();
     }
     // 顺手清一遍语音文件：孤儿录音删掉，合成缓存压到配额内
@@ -498,23 +510,6 @@ struct Index {
   }
 
   /** 语音消息：转写好的文字喂模型，录音文件挂在消息上回听 */
-  async sendVoice(clip: VoiceClip, transcript: string): Promise<void> {
-    if (this.apiKey.trim().length === 0) {
-      this.errMsg = '还没填 API Key，先点右上角设置一下吧。';
-      this.showSettings = true;
-      return;
-    }
-    this.errMsg = '';
-    const msg: Message = new Message('user', transcript, '', Date.now(), false,
-      clip.wavPath, clip.durationMs / 1000.0);
-    this.pushMessage(msg);
-    if (this.sending) {
-      // 她正回上一句，先挂到时间线上，等她说完再排给她
-      this.queuedTurns.push({ text: transcript, msg: msg });
-      return;
-    }
-    await this.runModelTurn(transcript, msg);
-  }
 
   /** 发出 userText，流式收她的回复，收完落成一条（语音条形态的）消息 */
   private async runModelTurn(userText: string, userMsg: Message): Promise<void> {
@@ -578,6 +573,10 @@ struct Index {
       if (text.length > 0) {
         this.pushMessage(new Message('assistant', text, '', Date.now(), false,
           '', 0, voiceReply));
+        if (voiceReply) {
+          // 这条是语音：立刻在后台合成，别等他点了才开始
+          this.prewarmVoice(text);
+        }
       }
       if (sticker.length > 0) {
         this.pushMessage(new Message('assistant', '', '', Date.now(), false,
@@ -720,19 +719,64 @@ struct Index {
       this.errMsg = '按的时间太短了，按住再说一遍。';
       return;
     }
+    if (this.apiKey.trim().length === 0) {
+      this.errMsg = '还没填 API Key，先点右上角设置一下吧。';
+      this.showSettings = true;
+      return;
+    }
+    this.errMsg = '';
+    // 松手立刻把语音条挂上去：先让他看见自己那条，转写在后台跑。
+    // 以前是等 ASR 回来才 push，电脑慢的时候要盯着空白等好几秒。
+    const msg: Message = new Message('user', '', '', Date.now(), false,
+      clip.wavPath, clip.durationMs / 1000.0);
+    this.pushMessage(msg);
+    this.persistNow();
+
     let text: string = '';
     try {
       text = (await VoiceService.transcribeFile(clip.wavPath)).trim();
     } catch (e) {
-      const err: Error = e as Error;
-      this.errMsg = err.message;
+      this.dropMessage(msg);
+      this.errMsg = (e as Error).message;
       return;
     }
     if (text.length === 0) {
-      this.errMsg = '她没听清，靠近点再按住说一次。';
+      this.dropMessage(msg);
+      this.errMsg = '她没听清，靠近点再按住说一遍。';
       return;
     }
-    await this.sendVoice(clip, text);
+    const filled: Message = this.setTranscript(msg, text);
+    if (this.sending) {
+      // 她正回上一句，先挂到时间线上，等她说完再排给她
+      this.queuedTurns.push({ text: text, msg: filled });
+      return;
+    }
+    await this.runModelTurn(text, filled);
+  }
+
+  /** 语音条先上屏、转写还没回来时被删掉（没听清 / 网络失败） */
+  private dropMessage(m: Message): void {
+    const next: Message[] = [];
+    for (let i: number = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id !== m.id) {
+        next.push(this.messages[i]);
+      }
+    }
+    this.messages = next;
+    this.persistNow();
+  }
+
+  /** 转写回来了：换一个消息对象触发重绘（原地改字段 ArkUI 不会刷新） */
+  private setTranscript(old: Message, text: string): Message {
+    const fresh: Message = new Message(old.role, text, old.reasoning, old.at, old.proactive,
+      old.audioPath, old.durationSec, old.voice, old.sticker);
+    const next: Message[] = [];
+    for (let i: number = 0; i < this.messages.length; i++) {
+      next.push(this.messages[i].id === old.id ? fresh : this.messages[i]);
+    }
+    this.messages = next;
+    this.persistNow();
+    return fresh;
   }
 
   /** 长按气泡复制原文（富文本里 Span 不支持 copyOption，只能自己来） */
@@ -1607,6 +1651,14 @@ struct Index {
           .fontColor(m.role === 'user' ? '#FDF3E7' : C_TEXT_DIM)
           .maxLines(12)
           .margin({ top: 4 })
+      } else if (m.role === 'user') {
+        // 语音条先上屏、转写还在路上
+        Text('识别中…')
+          .fontSize(11)
+          .lineHeight(16)
+          .fontColor('#FDF3E7')
+          .opacity(0.65)
+          .margin({ top: 4 })
       }
     }
     .alignItems(HorizontalAlign.Start)
@@ -1724,6 +1776,30 @@ struct Index {
       }
     } catch (e) {
       this.stickerFiles = [];
+    }
+  }
+
+  /**
+   * 她这条是语音：后台按句预热，点开时直接读缓存播，不用等。
+   * 失败就静默——真点的时候会再试一次并给提示。
+   */
+  private async prewarmVoice(text: string): Promise<void> {
+    try {
+      if (!(await this.voiceServiceUp())) {
+        return;
+      }
+      const sentences: string[] = VoiceService.splitSentences(text)
+        .filter((sn: string): boolean => VoiceService.stripForTts(sn).length > 0);
+      // 长回复先热前 8 句，剩下的点开再合成
+      const limit: number = sentences.length > 8 ? 8 : sentences.length;
+      for (let i: number = 0; i < limit; i++) {
+        try {
+          await VoiceService.synthToFile(sentences[i], this.voiceStyle);
+        } catch (e) {
+          return; // 一句失败就收手，免得刷一屏错误
+        }
+      }
+    } catch (e) {
     }
   }
 
