@@ -1,0 +1,36 @@
+# ===== 构建产物 =====
+entry/build/
+build/
+.hvigor/
+.preview/
+entry/.preview/
+oh_modules/
+entry/oh_modules/
+*.har
+
+# ===== 打包成品（每次构建都会变，不入库） =====
+*.hap
+*.hsp
+*.app
+*.zip
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.iml
+
+# ===== 本地工具（几十兆的二进制，需要时自己下） =====
+tools/*.exe
+tools/*.msi
+tools/*.zip
+
+# ===== 备份 / 临时文件 =====
+backup/
+*.bak
+*.tmp
+*.log
+
+# ===== 系统垃圾 =====
+.DS_Store
+Thumbs.db
+desktop.ini

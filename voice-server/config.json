@@ -1,0 +1,20 @@
+{
+  "port": 9880,
+  "gpt_sovits_url": "http://127.0.0.1:9881",
+  "asr_model": "paraformer-zh",
+  "asr_device": "cpu",
+  "token": "dsv-3f9a71c4e28b5d06",
+  "text_lang": "zh",
+  "prompt_lang": "zh",
+  "voices": {
+    "sweet": {
+      "ref": "D:/voice-server/refs/sweet.wav",
+      "prompt_text": "嘿嘿，你回来了，我等你半天了，快跟我说说今天的事吗？"
+    },
+    "queen": {
+      "ref": "D:/voice-server/refs/queen.wav",
+      "prompt_text": "阿信肯定不会拒绝我的，想知道更多我的事。"
+    }
+  },
+  "ffmpeg": "C:/ffmpeg/bin/ffmpeg.exe"
+}

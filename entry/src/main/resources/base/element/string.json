@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "DeepSeek HarmonyOS client module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "DeepSeek chat client"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "DeepSeek"
+    },
+    {
+      "name": "microphone_reason",
+      "value": "按住说话时需要使用麦克风，把你说的话转成文字发给她"
+    }
+  ]
+}

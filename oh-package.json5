@@ -1,0 +1,14 @@
+{
+  "modelVersion": "5.0.4",
+  "name": "deepseek_harmony",
+  "version": "1.0.0",
+  "description": "DeepSeek client for HarmonyOS (ArkTS + ArkUI)",
+  "main": "",
+  "author": "you",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.21",
+    "@ohos/hamock": "1.0.0"
+  }
+}
