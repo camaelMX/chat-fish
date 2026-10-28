@@ -6,6 +6,7 @@ import { notificationManager } from '@kit.NotificationKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { DeepSeekService, ChatMessage } from '../service/DeepSeekService';
 import { CompanionStore } from '../service/ChatStore';
+import { VoiceStorage } from '../service/VoiceStorage';
 import { MemoryService, Extracted, ExtractedCard } from '../service/MemoryService';
 import {
   ProactiveService,
@@ -281,6 +282,8 @@ struct Index {
     if (migrated) {
       this.persistNow();
     }
+    // 顺手清一遍语音文件：孤儿录音删掉，合成缓存压到配额内
+    this.sweepVoice(true);
     this.profile = data.profile;
     this.cards = data.cards;
     this.archives = data.archives;
@@ -586,6 +589,8 @@ struct Index {
     this.persistNow();
     this.maybeConsolidate();
     this.reschedule();
+    // 每轮结束顺便看一眼语音目录（限流，10 分钟最多一次）
+    this.sweepVoice(false);
     // 说完这句，处理你说完话之后排队进来的语音
     if (this.queuedTurns.length > 0) {
       const t: QueuedTurn = this.queuedTurns.shift() as QueuedTurn;
@@ -1724,6 +1729,36 @@ struct Index {
 
   private voiceUpCache: boolean = false;
   private voiceUpAt: number = 0;
+
+  /** 上次清语音文件的时间，防止每说一句话就扫一遍目录 */
+  private lastVoiceSweep: number = 0;
+
+  /**
+   * 清语音文件。录音只留消息还引用着的，合成缓存压到 30 MB 以内。
+   * force=false 时限流，10 分钟最多扫一次。
+   */
+  private sweepVoice(force: boolean): void {
+    const now: number = Date.now();
+    if (!force && now - this.lastVoiceSweep < 10 * 60 * 1000) {
+      return;
+    }
+    this.lastVoiceSweep = now;
+    const keep: string[] = [];
+    for (let i: number = 0; i < this.messages.length; i++) {
+      const p: string = this.messages[i].audioPath;
+      if (p.length > 0) {
+        keep.push(p);
+      }
+    }
+    try {
+      const dir: string = this.ctx().filesDir + '/voice';
+      const freed: number = VoiceStorage.sweep(dir, keep);
+      if (freed > 0) {
+        console.info('[VOICE] 清理释放 ' + Math.round(freed / 1024) + ' KB');
+      }
+    } catch (e) {
+    }
+  }
 
   /**
    * 她的声音服务此刻在不在（60 秒缓存，别每句话都去敲门）。
