@@ -284,11 +284,13 @@ docs/
 本机（D:\hw\DevEco Studio）直接跑：
 
 ```bat
-scriptsuild.bat          rem 构建 HAP
-scriptsuild.bat install  rem ohpm install
+scripts\build.bat          rem 构建 HAP
+scripts\build.bat install  rem ohpm install
 ```
 
 PowerShell 手动方式（换电脑参考）：
+
+```powershell
 $env:NODE_HOME='D:\hw\DevEco Studio\tools\node'
 $env:JAVA_HOME='D:\hw\DevEco Studio\jbr'
 $env:DEVECO_SDK_HOME='D:\hw\DevEco Studio\sdk'
@@ -312,10 +314,10 @@ $hdc='D:\hw\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
 **ASR 和 TTS 两个模型都跑在电脑上**（你要求的）：
 
 - 手机只负责录音（`VoiceInputService`）和播放（`PlayerService`）
-- 电脑上 `D:oice-serverdapter.py`（9880 端口）：`/asr` 用 FunASR paraformer-zh（CPU）、`/tts` 代理 GPT-SoVITS v2Pro（GPU、9881）
+- 电脑上 `D:\voice-server\adapter.py`（9880 端口）：`/asr` 用 FunASR paraformer-zh（CPU）、`/tts` 代理 GPT-SoVITS v2Pro（GPU、9881）
 - 电脑不开，语音不可用，打字聊天不受影响；设置里填电脑地址，可「测试连接」
 
-音色两种（甜妹 / 御姐），当前用 Windows TTS 晓慧快慢两种语速合成的**预制占位**参考音频，自己录的替换 `D:oice-serverefs\` 即可（要求见 docs/语音需求.md 第四节）。
+音色两种（甜妹 / 御姐），当前用 Windows TTS 晓慧快慢两种语速合成的**预制占位**参考音频，自己录的替换 `D:\voice-server\refs\` 即可（要求见 docs/语音需求.md 第四节）。
 
 实测：中文一句话合成约 2.5 秒，FunASR 转写 RTF≈0.24，4GB 显存宽裕。
 
@@ -325,3 +327,106 @@ $hdc='D:\hw\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
 - 记忆抽取靠模型自己判断，偶尔会漏记或记偏，所以给了手动编辑的入口；
 - token 估算按「中文 1 字 ≈ 1 token，英文 4 字符 ≈ 1 token」粗算，和真实计费会有出入；
 - 单文件存储，理论上消息很多时会变慢，目前限制最近 400 条。
+
+---
+
+## 十五、从 clone 到跑起来
+
+### 1. 环境
+
+| 需要 | 版本 / 说明 |
+|---|---|
+| DevEco Studio | 5.0 以上（本项目在 6.0 / SDK 26 上实测） |
+| HarmonyOS SDK | API 26（`compatibleSdkVersion` 26.0.0） |
+| 真机 | HarmonyOS NEXT。模拟器没有麦克风，语音功能用不了 |
+| Python | 3.10+，跑语音服务端用 |
+
+DevEco 自带 node、ohpm、hvigor，不用另外装。
+
+### 2. 拉代码
+
+```bash
+git clone git@gitee.com:camael/peiliao.git
+cd peiliao
+```
+
+用 DevEco Studio `File → Open` 打开**仓库根目录**，等右下角 sync 跑完。
+
+### 3. 配签名（必做，不配装不上手机）
+
+仓库里 `build-profile.json5` 的签名路径是原作者机器的，clone 下来用不了：
+
+`File → Project Structure → Signing Configs` → 勾 `Automatically generate signature` → 登录华为账号 → 等它生成。
+
+生成后这个文件会被改写成本机路径，属于正常现象，**别提交这处改动**。
+
+### 4. 填 API Key
+
+App 里 `设置 → 接口`：
+
+- 地址：`https://api.deepseek.com`
+- Key：你自己的 DeepSeek key（存在设备本地，不在代码里）
+
+### 5. 起语音服务端
+
+两件事：GPT-SoVITS 和 adapter。
+
+```bash
+# 1) GPT-SoVITS 的 api_v2 服务，默认 9881
+python api_v2.py -a 127.0.0.1 -p 9881
+
+# 2) 本项目的中转服务，9880
+cd voice-server
+pip install fastapi uvicorn requests funasr
+python adapter.py
+```
+
+`voice-server/config.json` 要改三处：
+
+| 字段 | 改成 |
+|---|---|
+| `voices.*.ref` | 你机器上 `refs/sweet.wav`、`refs/queen.wav` 的绝对路径 |
+| `ffmpeg` | 你的 ffmpeg 路径 |
+| `token` | 自己定一个，别用仓库里那个 |
+
+App 里 `VoiceService.ets` 的 `tokenValue` 必须和 `token` 完全一致，否则 `/tts`、`/asr` 全返 401。
+
+### 6. 手机连电脑
+
+同一个局域网，App `设置 → 语音`：
+
+- 地址填 `http://电脑IP:9880`
+- 点「测试连接」，`/health` 返回 ok 就通了
+
+出门用（不同网络）走 Cloudflare 隧道，见 `docs/外网访问.md`。**要填 https 全地址**，App 不会自动补协议。
+
+### 7. 装到手机
+
+```powershell
+$hdc = '<DevEco 安装目录>\sdk\default\openharmony\toolchains\hdc.exe'
+& $hdc list targets
+& $hdc install -r entry\build\default\outputs\default\entry-default-signed.hap
+```
+
+无线调试端口每次重启手机都会变，`hdc tconn 手机IP:端口` 之前先看一眼手机上写的端口号。
+
+---
+
+## 十六、加表情包
+
+`entry/src/main/resources/rawfile/stickers/` 下丢一张 GIF，**文件名就是它的情绪标签**：
+
+```
+啤酒.gif   →   标签「啤酒」
+```
+
+然后两步：
+
+1. `entry/src/main/ets/common/Stickers.ets` 加一行 `{ file: '啤酒.gif', tag: '啤酒' }`
+2. 想让「撸串」「喝一杯」这类话也能触发，在 `Index.ets` 的 `STICKER_CUES` 里加 `['撸串', '啤酒']`
+
+同名多张（`开心.gif`、`开心2.gif`）会**随机抽一张**。
+
+触发频率看 `Index.ets` 的 `STICKER_RATE`，默认 `0.7`，调小就少发。
+
+表情包只在「你俩的话里有情绪词」时才发，没有就不发，所以不会连着刷屏。
