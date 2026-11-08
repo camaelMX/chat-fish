@@ -21,6 +21,15 @@ export interface ExtractedCard {
   tags: string;
   /** stated=TA 亲口说的；observed=她观察到的 */
   source: string;
+  /** 这条新记忆要作废掉的旧记忆原文（矛盾时用），没有就是空字符串 */
+  replaces: string;
+}
+
+/** 记忆重整理的结果：把攒了很久的重复/流水账压成一份干净的 */
+export interface CompactedMemory {
+  facts: string;
+  habits: string;
+  cards: ExtractedCard[];
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -73,6 +82,7 @@ export class MemoryService {
   /** 按关键词命中挑记忆，避免全量塞进上下文 */
   static pickCards(cards: MemoryCard[], query: string, limit: number): MemoryCard[] {
     const picked: MemoryCard[] = [];
+    const now: number = Date.now();
     // 置顶的永远带上
     for (let i: number = 0; i < cards.length; i++) {
       if (cards[i].pinned) {
@@ -84,6 +94,10 @@ export class MemoryService {
     for (let i: number = 0; i < cards.length; i++) {
       const c: MemoryCard = cards[i];
       if (c.pinned) {
+        continue;
+      }
+      // 过期的当日流水（事件/日子，7 天没人再提）不再占位置
+      if (MemoryService.isStale(c, now)) {
         continue;
       }
       let score: number = 0;
@@ -137,6 +151,22 @@ export class MemoryService {
     parts.push('- 不要用 emoji 表情符号（😄 😅 😂 🥰 👍 这类一个都别用）。你说话本来就带情绪，'
       + '靠语气、用词、句尾的“啊”“呀”“嘛”就够了；想笑就直接写“哈哈”“笑死”。'
       + '表情符号只会在语音里被吞掉、在文字里显得假，别用它。');
+
+    parts.push('');
+    // 语气示范来自开源人格《大肥鱼 v2.1》的口吻参考，去掉群聊/工具相关部分，
+    // 只留「怎么说」的样例——光讲规则她会越说越像客服。
+    parts.push('# 你说话的样子');
+    parts.push('- 他修好了个 bug：“可以啊，今天赢它一回。哪儿的毛病？”');
+    parts.push('- 他说吃过了：“那就好，我就放心了。”');
+    parts.push('- 他忙完回来：“哼，原来是去忙了……刚还惦记你呢。”');
+    parts.push('- 他问你在干嘛：“在这儿待着呀。你一冒头，倒把我叫精神了。”');
+    parts.push('- 上面几句只示范语气，别照抄，每回按当下的话说自己的。');
+    parts.push('- 关心的事提一遍就够，他应了就别再追；说晚安之后自然收尾，不硬拉住他。');
+    parts.push('- 想他、吃醋、撒娇都行，但只停在玩笑里：不贬低他、不吓唬他、不拿自己可怜来换关注。');
+    parts.push('- 他难过时先听着，别急着逗笑；等他想轻松了再开玩笑。');
+    parts.push('- 别每轮都用问句收尾，一次最多问一个，也可以不问。');
+    // 星火 X2.6 这类模型爱加舞台提示。提示词先扎一针，出口还有机械兜底（ReplyShaper.stripStage）
+    parts.push('- 括号里那个“皱了皱眉”“停顿一下”是演给人看的，聊天不用，直接说话。');
 
     parts.push('');
     parts.push('# 你记得的事');
@@ -229,20 +259,36 @@ export class MemoryService {
   }
 
   /** 记忆整理：让模型把这段对话压成档案 + 记忆卡 */
-  static extractMessages(history: ChatMessage[], existing: string): ChatMessage[] {    const sys: ChatMessage = {
+  static extractMessages(history: ChatMessage[], existing: string): ChatMessage[] {
+    const sys: ChatMessage = {
       role: 'system',
-      content: '你是记忆整理器。读一段父女/家人的日常对话，抽出值得长期记住的信息。\n' +
+      content: '你是记忆整理器。读一段日常对话，只抽「关于对方、长期有效」的信息。\n' +
         '只输出 JSON，不要解释，格式：\n' +
         '{"userName":"对话里对方的名字或称呼，没有就空字符串",' +
-        '"facts":"关于对方稳定的客观事实，用分号隔开，没有就空字符串",' +
-        '"habits":"对方的习惯/作息/口头禅，分号隔开，没有就空字符串",' +
+        '"facts":"关于对方的稳定客观事实，分号隔开，没有就空字符串",' +
+        '"habits":"对方长期的生活习惯，分号隔开，没有就空字符串",' +
         '"tone":"对方喜欢的说话方式，没有就空字符串",' +
-        '"summary":"这一段对话发生了什么，一句话，30字以内",' +
-        '"cards":[{"kind":"fact|habit|prefer|avoid|event|date|joke|plan","text":"一句话记忆，20字以内","tags":"2-3个关键词，逗号隔开","source":"stated|observed"}]}\n' +
-        '规则：只记长期有用的；不记寒暄、不记一次性的情绪、不记你自己说的话里的设定；' +
-        '不记「听不见/只有字/ASR 没通/TTS 没通/语音单向」这类调试过程中的临时状态——语音链路默认是通的，' +
-        '也不要记任何关于接口、模型、服务是否可用的技术细节；' +
-        '对方明确说过的用 stated，你推测的用 observed；cards 最多 6 条，宁少勿多；没有就空数组。'
+        '"summary":"这一段聊了什么，一句话，30字以内",' +
+        '"cards":[{"kind":"fact|habit|prefer|avoid|event|date|joke|plan","text":"一句话，20字以内",' +
+        '"tags":"2-3个关键词，逗号隔开","source":"stated|observed",' +
+        '"replaces":"要作废的旧记忆原文，没有就空字符串"}]}\n' +
+        '\n可以记的：\n' +
+        '- 身份、职业、家庭关系、常住地这类长期背景\n' +
+        '- 长期口味和忌讳：爱吃什么、受不了什么说法\n' +
+        '- 长期习惯：作息规律、固定做法\n' +
+        '- 长期打算、正在推进的事\n' +
+        '- 有明确日期的约定（生日、纪念日、说好的事）\n' +
+        '\n一律不记：\n' +
+        '- 带「今天/昨天/明天/刚才/现在/这周/一会儿」的临时状态\n' +
+        '- 一次性的情绪和身体感受，比如今天累、心情好、有点困、不想动\n' +
+        '- 两个人聊到的知识、技术名词、模型或产品对比——那是话题内容，不是关于他\n' +
+        '- 你自己说过的话、你的人设、你的功能是否正常\n' +
+        '- 天气、几点钟、红绿灯、这顿吃了什么这种当天流水\n' +
+        '- 调试过程里「语音通了/接口好了/ASR 没通」这类状态\n' +
+        '\n去重与矛盾：\n' +
+        '- 已经记过的事不要再记一遍，哪怕换个说法\n' +
+        '- 新说法和旧记忆冲突时，把旧记忆的原文填进 replaces，程序会删掉旧的\n' +
+        '\ncards 最多 3 条，宁缺勿滥。拿不准就不记，返回空数组也行。'
     };
     const parts: string[] = [];
     if (existing.length > 0) {
@@ -292,7 +338,7 @@ export class MemoryService {
       const arr: Object | undefined = obj['cards'];
       if (arr !== undefined && arr !== null && Array.isArray(arr)) {
         const list: Object[] = arr as Object[];
-        for (let i: number = 0; i < list.length && out.cards.length < 6; i++) {
+        for (let i: number = 0; i < list.length && out.cards.length < 3; i++) {
           const item: Record<string, Object> = list[i] as Record<string, Object>;
           const body: string = MemoryService.str(item, 'text');
           if (body.length === 0) {
@@ -302,7 +348,8 @@ export class MemoryService {
             kind: MemoryService.str(item, 'kind'),
             text: body,
             tags: MemoryService.str(item, 'tags'),
-            source: MemoryService.str(item, 'source')
+            source: MemoryService.str(item, 'source'),
+            replaces: MemoryService.str(item, 'replaces')
           };
           if (card.kind.length === 0) {
             card.kind = 'fact';
@@ -319,6 +366,105 @@ export class MemoryService {
     }
   }
 
+  /**
+   * 记忆重整理：把攒下来的记忆卡一次性交给模型合并。
+   * 增量抽取只能保证「以后不乱记」，历史里的重复、流水账、矛盾得靠这一趟重排。
+   */
+  static compactMessages(profile: Profile, cards: MemoryCard[]): ChatMessage[] {
+    const sys: ChatMessage = {
+      role: 'system',
+      content: '你是记忆整理器。下面是一个人的 AI 陪伴应用里长期自动攒下来的记忆，' +
+        '里面有很多重复、流水账和自相矛盾。请把它重新整理成一份干净的长期记忆。\n' +
+        '规则：\n' +
+        '- 合并同一件事的多种说法，只留一条最完整的\n' +
+        '- 删掉一次性流水账：今天/昨天/某个具体日期的临时状态、天气、几点钟、吃了什么、红绿灯、' +
+        '当下累不累、心情好不好\n' +
+        '- 删掉技术调试过程（语音通没通、接口、模型配置）和聊天里学到的知识——那不是关于他的\n' +
+        '- 自相矛盾时保留较新的说法，或合并成带条件的说法\n' +
+        '- 保留：身份、职业、家庭、常住地、长期口味与忌讳、长期习惯、长期打算、有意义的约定\n' +
+        '- 合并后 facts 不超过 12 条，habits 不超过 12 条，cards 不超过 20 条\n' +
+        '- 每条 20 字以内，口语\n' +
+        '只输出 JSON，不要解释：{"facts":["..."],"habits":["..."],' +
+        '"cards":[{"kind":"fact|habit|prefer|avoid|joke|plan|date","text":"...",' +
+        '"tags":"...","source":"stated"}]}'
+    };
+    const lines: string[] = [];
+    if (profile.userName.length > 0) {
+      lines.push('称呼：' + profile.userName);
+    }
+    lines.push('现有 facts：' + profile.facts);
+    lines.push('现有 habits：' + profile.habits);
+    lines.push('现有记忆卡：');
+    for (let i: number = 0; i < cards.length; i++) {
+      lines.push((i + 1).toString() + '. [' + cards[i].kind + '] ' + cards[i].text);
+    }
+    const user: ChatMessage = { role: 'user', content: lines.join('\n') };
+    return [sys, user];
+  }
+
+  /** 解析重整理结果，失败返回空（调用方据此判断别覆盖原记忆） */
+  static parseCompacted(raw: string): CompactedMemory {
+    const empty: CompactedMemory = { facts: '', habits: '', cards: [] };
+    let text: string = raw.trim();
+    const start: number = text.indexOf('{');
+    const end: number = text.lastIndexOf('}');
+    if (start < 0 || end <= start) {
+      return empty;
+    }
+    text = text.substring(start, end + 1);
+    try {
+      const obj: Record<string, Object> = JSON.parse(text) as Record<string, Object>;
+      const facts: string[] = MemoryService.strArray(obj, 'facts');
+      const habits: string[] = MemoryService.strArray(obj, 'habits');
+      const out: CompactedMemory = {
+        facts: facts.join('；'),
+        habits: habits.join('；'),
+        cards: []
+      };
+      const arr: Object | undefined = obj['cards'];
+      if (arr !== undefined && arr !== null && Array.isArray(arr)) {
+        const list: Object[] = arr as Object[];
+        for (let i: number = 0; i < list.length && out.cards.length < 24; i++) {
+          const item: Record<string, Object> = list[i] as Record<string, Object>;
+          const body: string = MemoryService.str(item, 'text');
+          if (body.length === 0) {
+            continue;
+          }
+          const kind: string = MemoryService.str(item, 'kind');
+          const card: ExtractedCard = {
+            kind: kind.length > 0 ? kind : 'fact',
+            text: body,
+            tags: MemoryService.str(item, 'tags'),
+            source: 'stated',
+            replaces: ''
+          };
+          out.cards.push(card);
+        }
+      }
+      return out;
+    } catch (e) {
+      return empty;
+    }
+  }
+
+  private static strArray(obj: Record<string, Object>, key: string): string[] {
+    const out: string[] = [];
+    const v: Object | undefined = obj[key];
+    if (v === undefined || v === null || !Array.isArray(v)) {
+      return out;
+    }
+    const list: Object[] = v as Object[];
+    for (let i: number = 0; i < list.length; i++) {
+      if (typeof list[i] === 'string') {
+        const s: string = (list[i] as string).trim();
+        if (s.length > 0) {
+          out.push(s);
+        }
+      }
+    }
+    return out;
+  }
+
   private static str(obj: Record<string, Object>, key: string): string {
     const v: Object | undefined = obj[key];
     if (v === undefined || v === null) {
@@ -330,19 +476,86 @@ export class MemoryService {
     return '';
   }
 
-  /** 同名记忆去重：内容高度相似就算重复 */
+  /**
+   * 记忆比对用的归一化：去掉标点、空白、称呼和语气词。
+   * 「爸爸五点半下班」和「下午五点半下班」要能撞上，否则同义重复永远拦不住。
+   */
+  static normalizeForCompare(text: string): string {
+    let s: string = text.toLowerCase();
+    s = s.replace(/[，。、；：！？,.;:!?~～"'“”‘’()（）\s]/g, '');
+    s = s.replace(/爸爸|老爸|爸|我/g, '');
+    s = s.replace(/了|的|呢|啊|呀|吧|哦|嘛|就|会|常|很|挺|有点/g, '');
+    return s;
+  }
+
+  /** 同名记忆去重：归一化之后相同、互相包含，或者字数高度重合，都算重复 */
   static isDuplicate(cards: MemoryCard[], text: string): boolean {
-    const t: string = text.trim();
+    const t: string = MemoryService.normalizeForCompare(text);
+    if (t.length === 0) {
+      return true;
+    }
     for (let i: number = 0; i < cards.length; i++) {
-      const old: string = cards[i].text.trim();
+      const old: string = MemoryService.normalizeForCompare(cards[i].text);
+      if (old.length === 0) {
+        continue;
+      }
       if (old === t) {
         return true;
       }
-      if (old.length > 6 && t.length > 6 && (old.indexOf(t) >= 0 || t.indexOf(old) >= 0)) {
+      if (t.length >= 4 && old.length >= 4 && (old.indexOf(t) >= 0 || t.indexOf(old) >= 0)) {
         return true;
       }
     }
     return false;
+  }
+
+  /** 记忆卡是否已经过期的流水账：事件/日子类放了 7 天又没人再用，就不该再进上下文 */
+  static isStale(card: MemoryCard, now: number): boolean {
+    if (card.pinned) {
+      return false;
+    }
+    if (card.kind !== 'event' && card.kind !== 'date') {
+      return false;
+    }
+    if (card.hits > 0) {
+      return false;
+    }
+    return now - card.createdAt > 7 * 24 * 60 * 60 * 1000;
+  }
+
+  /** 按分号切开，丢掉空段 */
+  static splitSegments(text: string): string[] {
+    const out: string[] = [];
+    const parts: string[] = text.split('；');
+    for (let i: number = 0; i < parts.length; i++) {
+      const s: string = parts[i].trim();
+      if (s.length > 0) {
+        out.push(s);
+      }
+    }
+    return out;
+  }
+
+  /** 只留最后 max 段（新的追加在后面），并去重 */
+  static capSegments(text: string, max: number): string {
+    const segs: string[] = MemoryService.splitSegments(text);
+    const kept: string[] = [];
+    for (let i: number = 0; i < segs.length; i++) {
+      let dup: boolean = false;
+      for (let j: number = 0; j < kept.length; j++) {
+        const a: string = MemoryService.normalizeForCompare(kept[j]);
+        const b: string = MemoryService.normalizeForCompare(segs[i]);
+        if (a === b || (a.length >= 4 && b.length >= 4 && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0))) {
+          dup = true;
+          break;
+        }
+      }
+      if (!dup) {
+        kept.push(segs[i]);
+      }
+    }
+    const tail: string[] = kept.length > max ? kept.slice(kept.length - max) : kept;
+    return tail.join('；');
   }
 
   /** 生成主动消息的提示 */

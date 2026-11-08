@@ -7,7 +7,7 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { DeepSeekService, ChatMessage } from '../service/DeepSeekService';
 import { CompanionStore } from '../service/ChatStore';
 import { VoiceStorage } from '../service/VoiceStorage';
-import { MemoryService, Extracted, ExtractedCard } from '../service/MemoryService';
+import { MemoryService, Extracted, ExtractedCard, CompactedMemory } from '../service/MemoryService';
 import {
   ProactiveService,
   STICK_CLUNGY,
@@ -35,6 +35,7 @@ import { isPeakNow, estimateCost, nextSwitchText } from '../common/Pricing';
 import { VoiceInputService, VoiceInputEvents, VoiceClip } from '../service/VoiceInputService';
 import { VoiceService } from '../service/VoiceService';
 import { STICKERS, StickerDef, migrateStickerName } from '../common/Stickers';
+import { ReplyShaper } from '../common/ReplyShaper';
 import { PlayerService } from '../service/PlayerService';
 
 /** 排队等她说完再发的语音 */
@@ -57,6 +58,8 @@ const KEEP_RAW: number = 6;
 /** 攒够多少条就整理一次 */
 const CONSOLIDATE_EVERY: number = 12;
 const MAX_CARDS: number = 200;
+/** facts / habits 最多留多少段（再多了每轮上下文都是垃圾） */
+const MERGE_TEXT_MAX: number = 14;
 /** 打字聊天时她抽中语音条的概率；用语音说话时她必回语音，不受这个值管 */
 const REPLY_VOICE_RATE: number = 0.5;
 /** 回复内容沾到表情标签时，真的把表情包发出来的概率 */
@@ -168,6 +171,7 @@ struct Index {
   private peakTimer: number = -1;
   private aborted: boolean = false;
   private consolidating: boolean = false;
+  @State compacting: boolean = false;
   /** 上一次主动消息生成失败时用的备用台词 */
   private fallbackLines: string[] = [
     '你在干嘛呀',
@@ -492,6 +496,47 @@ struct Index {
     this.scrollToBottom();
   }
 
+  /**
+   * 一条一条地发：第一条立刻出现，后面的隔一会儿再蹦，像真人在打字。
+   * 不能用 await 睡，会把整轮对话堵住，所以用 setTimeout 排队。
+   */
+  private pushBubbles(segs: string[], withVoice: boolean): void {
+    for (let i: number = 0; i < segs.length; i++) {
+      const seg: string = segs[i];
+      if (i === 0) {
+        this.pushMessage(new Message('assistant', seg, '', Date.now(), false, '', 0, withVoice));
+        if (withVoice) {
+          this.prewarmVoice(seg);
+        }
+        this.persistNow();
+        continue;
+      }
+      setTimeout(() => {
+        this.pushMessage(new Message('assistant', seg, '', Date.now(), false, '', 0, withVoice));
+        if (withVoice) {
+          this.prewarmVoice(seg);
+        }
+        this.persistNow();
+      }, 900 * i);
+    }
+  }
+
+  /** 她最近 5 条的开头一句，用来判断这句是不是又在复读自己 */
+  private recentOpeners(): string[] {
+    const out: string[] = [];
+    for (let i: number = this.messages.length - 1; i >= 0 && out.length < 5; i--) {
+      const m: Message = this.messages[i];
+      if (m.role !== 'assistant' || m.sticker.length > 0 || m.content.length === 0) {
+        continue;
+      }
+      const head: string = ReplyShaper.openerOf(m.content);
+      if (head.length > 0) {
+        out.push(head);
+      }
+    }
+    return out;
+  }
+
   async send(): Promise<void> {
     const text: string = this.input.trim();
     if (text.length === 0 || this.sending) {
@@ -562,6 +607,8 @@ struct Index {
     if (reply.length > 0) {
       const parts = this.extractSticker(reply);
       let text: string = VoiceService.stripEmoji(parts[0]);
+      // 出站整形：拆数组壳、标点归一、删掉跟上几句一模一样的开头（回声病）
+      text = ReplyShaper.shape(text, this.recentOpeners());
       if (text.length === 0 && parts[0].length > 0) {
         text = parts[0];
       }
@@ -571,11 +618,18 @@ struct Index {
         sticker = this.autoSticker(text, userText);
       }
       if (text.length > 0) {
-        this.pushMessage(new Message('assistant', text, '', Date.now(), false,
-          '', 0, voiceReply));
-        if (voiceReply) {
-          // 这条是语音：立刻在后台合成，别等他点了才开始
-          this.prewarmVoice(text);
+        // 真人是一条一条发的：拆成几条，隔一小会儿蹦出来。
+        // 但发语音时不能拆——一条语音就是一整段，拆成三段会一顿一顿的。
+        const segs: string[] = voiceReply ? [text] : ReplyShaper.split(text);
+        if (segs.length <= 1) {
+          this.pushMessage(new Message('assistant', text, '', Date.now(), false,
+            '', 0, voiceReply));
+          if (voiceReply) {
+            // 这条是语音：立刻在后台合成，别等他点了才开始
+            this.prewarmVoice(text);
+          }
+        } else {
+          this.pushBubbles(segs, voiceReply);
         }
       }
       if (sticker.length > 0) {
@@ -954,6 +1008,18 @@ struct Index {
     let list: MemoryCard[] = this.cards.slice();
     for (let i: number = 0; i < ext.cards.length; i++) {
       const c: ExtractedCard = ext.cards[i];
+      // 矛盾覆盖：模型说这条旧的作废了，就先把它删掉
+      if (c.replaces.length > 0) {
+        const gone: string = MemoryService.normalizeForCompare(c.replaces);
+        list = list.filter((old: MemoryCard): boolean => {
+          if (old.pinned) {
+            return true;
+          }
+          const o: string = MemoryService.normalizeForCompare(old.text);
+          return !(o === gone || (o.length >= 4 && gone.length >= 4
+            && (o.indexOf(gone) >= 0 || gone.indexOf(o) >= 0)));
+        });
+      }
       if (MemoryService.isDuplicate(list, c.text)) {
         continue;
       }
@@ -974,19 +1040,76 @@ struct Index {
     this.cards = list;
   }
 
+  /**
+   * 记忆重整理：把攒下来的卡片一次性交给模型合并。
+   * 增量抽取只管「以后别乱记」，历史里的重复和流水账得靠这一趟重排。
+   */
+  async compactMemory(): Promise<void> {
+    if (this.compacting) {
+      return;
+    }
+    if (this.apiKey.trim().length === 0) {
+      this.toast('先填好接口和密钥再整理');
+      return;
+    }
+    if (this.cards.length === 0 && this.profile.facts.length === 0) {
+      this.toast('现在还没有记忆可整理');
+      return;
+    }
+    this.compacting = true;
+    this.busyMsg = '她在重新整理记忆…';
+    try {
+      const req: ChatMessage[] = MemoryService.compactMessages(this.profile, this.cards);
+      const raw: string = await this.service.chatOnce(this.apiKey, this.activeModel(), req, 0.2, 3000, true);
+      const m: CompactedMemory = MemoryService.parseCompacted(raw);
+      if (m.cards.length === 0 && m.facts.length === 0 && m.habits.length === 0) {
+        this.busyMsg = '';
+        this.toast('整理失败，记忆没动');
+        return;
+      }
+      const p: Profile = this.profile;
+      this.profile = {
+        herName: p.herName,
+        userName: p.userName,
+        persona: p.persona,
+        facts: m.facts,
+        habits: m.habits,
+        tone: p.tone,
+        updatedAt: Date.now()
+      };
+      const next: MemoryCard[] = [];
+      for (let i: number = 0; i < m.cards.length; i++) {
+        const c: ExtractedCard = m.cards[i];
+        next.push(CompanionStore.newCard(c.kind, c.text, c.tags, c.source));
+      }
+      this.cards = next;
+      this.busyMsg = '';
+      this.persistNow();
+      this.toast('整理好了：' + m.facts.length + ' 条事实、' + next.length + ' 张卡');
+    } catch (e) {
+      this.busyMsg = '';
+      this.toast('整理失败，记忆没动');
+    } finally {
+      this.compacting = false;
+    }
+  }
+
+  private toast(msg: string): void {
+    this.getUIContext().getPromptAction().showToast({
+      message: msg,
+      duration: 2000
+    });
+  }
+
   private mergeText(oldText: string, addText: string): string {
     const a: string = oldText.trim();
     const b: string = addText.trim();
     if (b.length === 0) {
       return a;
     }
-    if (a.length === 0) {
-      return b;
-    }
-    if (a.indexOf(b) >= 0) {
-      return a;
-    }
-    return a + '；' + b;
+    // facts / habits 是会被每轮塞进上下文的长文本，只增不减迟早糊掉。
+    // 追加后统一去重 + 截断，保留最近的。
+    return MemoryService.capSegments(a.length === 0 ? b : a + '；' + b, MERGE_TEXT_MAX);
   }
 
   private memoryDigest(): string {
@@ -2495,6 +2618,21 @@ struct Index {
             .fontSize(12)
             .fontColor(C_TEXT_DIM)
             .width('100%')
+          Text(this.compacting ? '正在整理…' : '整理记忆（清掉重复、流水账和矛盾）')
+            .fontSize(13)
+            .fontColor(this.compacting ? C_TEXT_DIM : C_ACCENT)
+            .width('100%')
+            .padding({ top: 12, bottom: 4 })
+            .onClick(() => {
+              if (!this.compacting) {
+                this.compactMemory();
+              }
+            })
+          Text('把攒下来的记忆交给模型重排一遍，重复的合并、一次性的删掉。会调一次接口。')
+            .fontSize(11)
+            .fontColor(C_TEXT_DIM)
+            .width('100%')
+            .padding({ bottom: 10 })
           Text('重新认识她（清空全部记忆和对话）')
             .fontSize(13)
             .fontColor('#C9614A')

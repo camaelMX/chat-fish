@@ -28,9 +28,27 @@ export interface Price {
 const PRICE_FLASH: Price = { inMiss: 2, inHit: 0.2, out: 3 };
 /** 官方公开价：pro 档 */
 const PRICE_PRO: Price = { inMiss: 4, inHit: 0.5, out: 12 };
+/** 白嫖档：官方免费额度，不花钱 */
+const PRICE_FREE: Price = { inMiss: 0, inHit: 0, out: 0 };
+
+/** 已知免费模型（名字命中就算免费），智谱官方 GLM-4.x-Flash 是永久免费的 */
+const FREE_MODELS: string[] = ['glm-4.7-flash', 'glm-4.5-flash', 'glm-4-flash', 'qwen3-32b-free'];
+
+export function isFreeModel(model: string): boolean {
+  const m: string = model.toLowerCase();
+  for (let i: number = 0; i < FREE_MODELS.length; i++) {
+    if (m.indexOf(FREE_MODELS[i]) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function priceOf(model: string): Price {
   const m: string = model.toLowerCase();
+  if (isFreeModel(m)) {
+    return PRICE_FREE;
+  }
   if (m.indexOf('pro') >= 0) {
     return PRICE_PRO;
   }
