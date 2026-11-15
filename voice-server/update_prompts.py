@@ -11,11 +11,14 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(BASE, 'config.json')
 
 
-def asr(path):
+def asr(path, token):
     with open(path, 'rb') as f:
         data = f.read()
-    req = urllib.request.Request('http://127.0.0.1:9880/asr', data=data,
-                                 headers={'Content-Type': 'application/octet-stream'})
+    headers = {'Content-Type': 'application/octet-stream'}
+    # adapter 配了 token 就必须带，否则 /asr 直接 401
+    if token:
+        headers['X-Voice-Token'] = token
+    req = urllib.request.Request('http://127.0.0.1:9880/asr', data=data, headers=headers)
     r = urllib.request.urlopen(req, timeout=120)
     return json.loads(r.read()).get('text', '').strip()
 
@@ -23,12 +26,13 @@ def asr(path):
 def main():
     with open(CONFIG, 'r', encoding='utf-8') as f:
         cfg = json.load(f)
+    token = (cfg.get('token') or '').strip()
     for kind in ('sweet', 'queen'):
         wav = os.path.join(BASE, 'refs', kind + '.wav')
         if not os.path.exists(wav):
             print('[跳] %s.wav 不存在' % kind)
             continue
-        text = asr(wav)
+        text = asr(wav, token)
         if not text:
             print('[败] %s 没转出文字，手填吧' % kind)
             continue
