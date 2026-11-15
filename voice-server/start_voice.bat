@@ -1,6 +1,8 @@
 @echo off
-rem 一键启动她的声音（两个窗口：GPT-SoVITS GPU + 适配服务）
-start "GPT-SoVITS api_v2" cmd /k D:\voice-server\start_gptsovits.bat
+rem Start both windows: GPT-SoVITS (9881, GPU) + adapter (9880)
+rem Paths: see env.bat in this folder
+rem /D sets the working directory, so a path with spaces still works
+start "GPT-SoVITS api_v2" /D "%~dp0." cmd /k start_gptsovits.bat
 timeout /t 3 >nul
-start "voice adapter" cmd /k D:\voice-server\start_adapter.bat
-echo 已启动：api_v2(9881) + adapter(9880)
+start "voice adapter" /D "%~dp0." cmd /k start_adapter.bat
+echo started: api_v2(9881) + adapter(9880)

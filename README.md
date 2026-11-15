@@ -86,7 +86,7 @@ cp entry/src/main/resources/rawfile/app_secrets.example.json \
 
 ### 4. 构建
 
-改 `scripts/build.bat` 第一行的 DevEco 安装路径，然后：
+改两处路径：`scripts/build.bat` 第一行的 DevEco 安装路径，以及 `voice-server/env.bat` 里的 `GPTSOVITS_HOME`（指向你解压的 GPT-SoVITS 目录；adapter 目录由脚本自身位置推导，不用填）。然后：
 
 ```bat
 scripts\build.bat          rem 构建 HAP
@@ -183,6 +183,16 @@ App 侧 `app_secrets.json` 的 `voiceToken` 必须和 `token` 一字不差，否
 ```
 
 `prompt_text` 必须和参考音逐字一致，声学模型靠它对齐音色。换音色的顺序：替换 wav → 改 `ref` 和 `prompt_text` → **重启 adapter**（配置只在启动时读一次）。
+
+### `voice-server/env.bat`
+
+语音脚本里唯一的路径开关，只有一行要改：
+
+```bat
+set "GPTSOVITS_HOME=D:\dev-setup\gptsovits\GPT-SoVITS-v2pro-20250604"
+```
+
+`start_voice.bat` / `start_adapter.bat` / `start_gptsovits.bat` / `tools\start-tunnel.bat` 都 `call` 它，改一处全生效；`VOICE_DIR` 取脚本自身所在目录，所以仓库放哪都行。adapter 要单独部署到别的目录时，设环境变量 `VOICE_DIR` 指向那里，隧道脚本就会把网址写过去。
 
 ### 家里 / 出门双地址
 
@@ -349,3 +359,12 @@ TCP 连接几秒就断（锁屏、退出无线调试页面都会断）。`tconn`
 ## 主题
 
 暖砂。底色 `#F6F0E8`，她的气泡 `#FFFFFF`，你的气泡 `#E8A87C`，强调色 `#C97B4A`。气泡圆角不对称：尾角 5，其余 16。
+
+---
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。
+
+仓库里的音色参考音、角色形象、表情包**不在授权范围内**，那些素材不在仓库中，需自备。人格口吻参考自开源人格《大肥鱼》，按其原许可使用。
+

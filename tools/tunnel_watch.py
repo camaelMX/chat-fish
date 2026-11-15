@@ -25,16 +25,19 @@ URL_RE = re.compile(r'https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com', re.IGNORE
 
 def collect_targets():
     """
-    网址文件的位置。隧道脚本可能在仓库 tools\\ 下，adapter 却跑在
-    D:\\voice-server\\，两边不是同一个目录，所以所有「有 adapter.py」的
-    候选目录都写一份，谁在跑谁就能读到。
+    网址文件的位置。隧道脚本在仓库 tools\\ 下，adapter 可能跑在另一个部署
+    目录（设置环境变量 VOICE_DIR 指向它），所以所有「有 adapter.py」的候选
+    目录都写一份，谁在跑谁就能读到。
     """
     env = os.environ.get('VOICE_TUNNEL_URL_FILE', '').strip()
     if env and Path(env).parent.is_dir():
         return [Path(env)]
 
-    dirs = [
-        Path('D:/voice-server'),           # 实际部署目录
+    dirs = []
+    deploy = os.environ.get('VOICE_DIR', '').strip()
+    if deploy:
+        dirs.append(Path(deploy))          # 部署目录（env.bat 里设的）
+    dirs += [
         ROOT / 'voice-server',             # 仓库源码目录
         HERE.parent,                       # tools 被单独拷过去时
         HERE,                              # 兜底
@@ -47,7 +50,7 @@ def collect_targets():
     base = matched if matched else (existing[:1] if existing else [HERE])
     targets = []
     for d in base:
-        # 两种命名都写：start_voice_stack.ps1 读 tunnel-url.txt，
+        # 两种命名都写：老的自启脚本读 tunnel-url.txt，
         # 仓库版 adapter 两个都认，tools 脚本原来用 tunnel_url.txt
         for name in ('tunnel-url.txt', 'tunnel_url.txt'):
             p = d / name

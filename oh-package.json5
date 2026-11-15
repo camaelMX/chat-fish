@@ -2,10 +2,10 @@
   "modelVersion": "5.0.4",
   "name": "deepseek_harmony",
   "version": "1.0.0",
-  "description": "DeepSeek client for HarmonyOS (ArkTS + ArkUI)",
+  "description": "HarmonyOS 上的陪伴型 AI 客户端（ArkTS + ArkUI）",
   "main": "",
-  "author": "you",
-  "license": "",
+  "author": "camael",
+  "license": "MIT",
   "dependencies": {},
   "devDependencies": {
     "@ohos/hypium": "1.0.21",

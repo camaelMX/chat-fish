@@ -1,9 +1,13 @@
 @echo off
-rem Start the adapter (phone talks to this) on port 9880
-cd /d D:\voice-server
-set PYTHON=D:\dev-setup\gptsovits\GPT-SoVITS-v2pro-20250604\runtime\python.exe
+rem Start the adapter (the phone connects to this), default port 9880
+rem Paths: see env.bat in this folder
+call "%~dp0env.bat"
+cd /d "%VOICE_DIR%"
+
+set "PYTHON=%GPTSOVITS_HOME%\runtime\python.exe"
 if not exist "%PYTHON%" (
-  echo runtime python not found at %PYTHON%
+  echo [error] runtime python not found: %PYTHON%
+  echo Check GPTSOVITS_HOME in env.bat
   pause
   exit /b 1
 )

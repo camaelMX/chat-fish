@@ -1,10 +1,14 @@
 @echo off
-rem Start GPT-SoVITS api_v2 server on port 9881 (GPU)
-set PKG=D:\dev-setup\gptsovits\GPT-SoVITS-v2pro-20250604
-cd /d %PKG%
-set PYTHON=%PKG%\runtime\python.exe
+rem Start GPT-SoVITS api_v2 on port 9881 (uses GPU)
+rem Paths: see env.bat in this folder
+call "%~dp0env.bat"
+
+set "PKG=%GPTSOVITS_HOME%"
+cd /d "%PKG%"
+set "PYTHON=%PKG%\runtime\python.exe"
 if not exist "%PYTHON%" (
-  echo runtime python not found at %PYTHON%
+  echo [error] runtime python not found: %PYTHON%
+  echo Check GPTSOVITS_HOME in env.bat
   pause
   exit /b 1
 )
