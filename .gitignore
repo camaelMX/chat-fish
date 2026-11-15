@@ -1,0 +1,65 @@
+# ===== 构建产物 =====
+entry/build/
+build/
+.hvigor/
+.preview/
+entry/.preview/
+oh_modules/
+entry/oh_modules/
+*.har
+
+# ===== 打包成品（每次构建都会变，不入库） =====
+*.hap
+*.hsp
+*.app
+*.zip
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.iml
+
+# ===== 本地工具（几十兆的二进制，需要时自己下） =====
+tools/*.exe
+tools/*.msi
+tools/*.zip
+
+# ===== 备份 / 临时文件 =====
+backup/
+*.bak
+*.tmp
+*.log
+
+# 隧道网址是运行时生成的，每次重启都变
+voice-server/tunnel_url.txt
+voice-server/tunnel-url.txt
+tools/tunnel_url.txt
+tools/tunnel-url.txt
+
+# ===== 系统垃圾 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 本地密钥 / 私人配置（绝不入库） =====
+# local/ 里放着被摘出来的真值：SECRETS.md、config.json、build-profile.json5、音色参考音
+# 换机器或重装时照 local/SECRETS.md 填回去；整包压缩分享时记得先剔掉这个目录
+local/
+
+# App 的本地密钥（构建时打进 HAP，但不进仓库）；模板见 rawfile/app_secrets.example.json
+entry/src/main/resources/rawfile/app_secrets.json
+
+# 语音服务配置：仓库只保留 config.example.json，真配置自己复制一份
+voice-server/config.json
+
+# 签名配置：仓库只保留 build-profile.example.json5
+build-profile.json5
+
+# 音色参考音是动画角色配音，版权素材，别提交（自备 3~10 秒干声）
+voice-server/refs/*.wav
+voice-server/refs/*.m4a
+voice-server/refs/*.mp3
+voice-server/refs/incoming/
+
+# 音色试听/调参产物
+voice-tests/

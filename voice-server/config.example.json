@@ -1,0 +1,25 @@
+{
+  "port": 9880,
+  "gpt_sovits_url": "http://127.0.0.1:9881",
+  "asr_model": "paraformer-zh",
+  "asr_device": "cpu",
+  "token": "CHANGE_ME_换成你自己的随机串",
+  "text_lang": "zh",
+  "prompt_lang": "zh",
+  "voices": {
+    "sweet": {
+      "ref": "D:/voice-server/refs/sweet.wav",
+      "prompt_text": "参考音里说的那句话，要和音频逐字一致（用于对齐音色）"
+    },
+    "queen": {
+      "ref": "D:/voice-server/refs/queen_short.wav",
+      "prompt_text": "同上：这段参考音的原话"
+    },
+    "yukino": {
+      "ref": "D:/voice-server/refs/yukino_001.wav",
+      "prompt_text": "あなたいきなり姉さんのこと言い当てるから驚いたわ",
+      "prompt_lang": "ja"
+    }
+  },
+  "ffmpeg": "C:/ffmpeg/bin/ffmpeg.exe"
+}
